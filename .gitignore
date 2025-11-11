@@ -1,0 +1,6 @@
+# .gitignore
+node_modules/
+.npm
+*.log
+.DS_Store
+.js-knowledge-data/

@@ -1,0 +1,40 @@
+{
+  "name": "js-knowledge-tracker",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "JavaScript learning tracker that connects theory with practice through Git commits",
+  "bin": {
+    "jstrack": "./bin/jsknowledge.js"
+  },
+  "files": [
+    "src/",
+    "bin/",
+    "README.md"
+  ],
+  "scripts": {
+    "start": "node src/jsknowledge.js",
+    "test": "echo \"No tests yet\" && exit 0"
+  },
+  "keywords": [
+    "javascript",
+    "learning", 
+    "tracker",
+    "education",
+    "knowledge-management",
+    "git",
+    "progress"
+  ],
+  "author": "ione_chebkn",
+  "license": "MIT",
+  "dependencies": {
+    "chalk": "^5.3.0",
+    "commander": "^11.1.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ione-chebkn/js-knowledge-tracker"
+  }
+}
