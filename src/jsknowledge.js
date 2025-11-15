@@ -3,13 +3,9 @@
 import { program } from "commander"
 import chalk from "chalk"
 import {
-    getUnusedArticles,
-    suggestByCategory,
     aiSuggestWithPlan,
-    aiSuggest,
     markAsApplied,
     markAsStudied,
-    getAppliedArticles,
     getKnowledgeBase,
     isCommitAlreadyLinked,
     findCommitUsage,
@@ -306,9 +302,8 @@ program
     .option("-a, --applied", "Show only applied articles (progress 100%)")
     .option("-s, --studied", "Show only studied articles")
     .option("-u, --unused", "Show only unused articles (progress < 100%)")
-    .option("-l, --level <level>", "Filter by level (concept, syntax, etc)")
     .option("-q, --query <keyword>", "Search articles by keyword")
-    .option("-n, --number <count>", "Number of articles to show (default: 5)", "5")
+    .option("-n, --number <count>", "Number of articles to show (default: 3)", "3")
     .action((options) => {
         console.log(chalk.blue.bold("\n📖 JavaScript Articles\n"))
         const knowledgeBase = getKnowledgeBase()
