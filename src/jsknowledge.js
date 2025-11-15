@@ -13,8 +13,9 @@ import {
     getProgressByLevel,
 } from "./suggest.js"
 import { getCurrentProjectName, validateProjectExists, validateCommitExists, askForConfirmation } from "./storage.js"
+const { version } = require("../package.json")
 
-program.version("0.1.0").description("AI-powered JavaScript learning tracker")
+program.version(version).description("AI-powered JavaScript learning tracker")
 
 /// В команде suggest
 program
