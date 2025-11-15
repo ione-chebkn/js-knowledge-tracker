@@ -3,15 +3,15 @@ import fs from "fs"
 import path from "path"
 import { execSync } from "child_process"
 import readline from "readline"
-
-const KNOWLEDGE_REPO = "https://github.com/ione-chebkn/js-knowledge-data"
+import { CONFIG } from "./config.js"
+import chalk from "chalk"
 const LOCAL_DATA_DIR = path.join(process.cwd(), ".js-knowledge-data")
 const DATA_FILE = path.join(LOCAL_DATA_DIR, "knowledge-base.json")
 
 export async function validateProjectExists(projectName) {
     try {
-        // Проверяем через GitHub API существует ли репо
-        const response = await fetch(`https://api.github.com/repos/ione-chebkn/${projectName}`)
+        // Используем CONFIG для GitHub URL
+        const response = await fetch(`${CONFIG.GITHUB.BASE_URL}/repos/${CONFIG.GITHUB.USER}/${projectName}`)
 
         if (response.status === 200) {
             return { exists: true, isPublic: true }
@@ -19,7 +19,7 @@ export async function validateProjectExists(projectName) {
             // Если нет у основного пользователя, проверим может это другой пользователь
             if (projectName.includes("/")) {
                 const [user, repo] = projectName.split("/")
-                const userResponse = await fetch(`https://api.github.com/repos/${user}/${repo}`)
+                const userResponse = await fetch(`${CONFIG.GITHUB.BASE_URL}/repos/${user}/${repo}`)
                 if (userResponse.status === 200) {
                     return { exists: true, isPublic: true, fullName: projectName }
                 }
@@ -29,7 +29,7 @@ export async function validateProjectExists(projectName) {
     } catch (error) {
         // Если GitHub API недоступен - пропускаем проверку
         console.log(chalk.yellow("⚠️  Не удалось проверить проект на GitHub"))
-        return { exists: true, skipCheck: true } // Пропускаем проверку
+        return { exists: true, skipCheck: true }
     }
 
     return { exists: false }
@@ -63,7 +63,7 @@ export function getCurrentProjectName() {
 function ensureKnowledgeRepo() {
     if (!fs.existsSync(LOCAL_DATA_DIR)) {
         console.log("📥 Клонируем базу знаний...")
-        execSync(`git clone ${KNOWLEDGE_REPO} ${LOCAL_DATA_DIR}`, {
+        execSync(`git clone ${CONFIG.KNOWLEDGE_REPO} ${LOCAL_DATA_DIR}`, {
             stdio: "inherit",
         })
     } else {
@@ -73,6 +73,17 @@ function ensureKnowledgeRepo() {
             stdio: "inherit",
         })
     }
+}
+
+// Добавляем функцию для поиска файла данных (на случай если основной недоступен)
+function findDataFile() {
+    for (const file of CONFIG.BACKUP_FILES) {
+        const filePath = path.join(LOCAL_DATA_DIR, file)
+        if (fs.existsSync(filePath)) {
+            return filePath
+        }
+    }
+    return DATA_FILE // возвращаем основной путь, даже если файла нет
 }
 
 function pushChanges(commitMessage) {
@@ -90,7 +101,8 @@ function pushChanges(commitMessage) {
 export function saveKnowledgeBase(data) {
     ensureKnowledgeRepo()
     try {
-        fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2))
+        const dataFile = findDataFile()
+        fs.writeFileSync(dataFile, JSON.stringify(data, null, 2))
         const commitMsg = `feat: update knowledge - ${new Date().toLocaleString()}`
         pushChanges(commitMsg)
         return true
@@ -99,12 +111,17 @@ export function saveKnowledgeBase(data) {
         return false
     }
 }
-
 export function loadKnowledgeBase() {
     ensureKnowledgeRepo()
     try {
-        if (fs.existsSync(DATA_FILE)) {
-            return JSON.parse(fs.readFileSync(DATA_FILE, "utf8"))
+        const dataFile = findDataFile()
+        if (fs.existsSync(dataFile)) {
+            const data = JSON.parse(fs.readFileSync(dataFile, "utf8"))
+            console.log(chalk.gray(`📁 Используется файл: ${path.basename(dataFile)}`))
+            return data
+        } else {
+            console.log(chalk.yellow("⚠️  Файл базы знаний не найден!"))
+            console.log(chalk.gray(`   Искали: ${CONFIG.BACKUP_FILES.join(", ")}`))
         }
     } catch (error) {
         console.error("❌ Ошибка загрузки:", error.message)
