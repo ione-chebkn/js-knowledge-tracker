@@ -13,9 +13,12 @@ import {
     getProgressByLevel,
 } from "./suggest.js"
 import { getCurrentProjectName, validateProjectExists, validateCommitExists, askForConfirmation } from "./storage.js"
-const { version } = require("../package.json")
 
-program.version(version).description("AI-powered JavaScript learning tracker")
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
+const packageJson = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf8"))
+
+program.version(packageJson.version).description("AI-powered JavaScript learning tracker")
 
 /// В команде suggest
 program
