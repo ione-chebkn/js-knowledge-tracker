@@ -1,6 +1,6 @@
 {
   "name": "js-knowledge-tracker",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "type": "module",
   "description": "JavaScript learning tracker that connects theory with practice through Git commits",
   "bin": {
@@ -17,7 +17,7 @@
   },
   "keywords": [
     "javascript",
-    "learning", 
+    "learning",
     "tracker",
     "education",
     "knowledge-management",
