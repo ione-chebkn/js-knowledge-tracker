@@ -1,42 +1,72 @@
 // src/suggest.js
 import { loadKnowledgeBase, saveKnowledgeBase } from "./storage.js"
 import chalk from "chalk"
+import path from "path"
+import fs from "fs"
 // Все функции теперь работают через storage
 export function getKnowledgeBase() {
     const knowledgeBase = loadKnowledgeBase() || {}
 
-    // Если данные в формате с категориями и articles, преобразуем в плоский формат
-    const firstKey = Object.keys(knowledgeBase)[0]
-    const firstItem = knowledgeBase[firstKey]
+    // // Тихий режим конвертации
+    // const firstKey = Object.keys(knowledgeBase)[0]
+    // const firstItem = knowledgeBase[firstKey]
 
-    if (firstItem && firstItem.articles) {
-        console.log(chalk.yellow("🔄 Обнаружен формат с категориями. Конвертируем в плоский..."))
-        return convertCategoryFormat(knowledgeBase)
-    }
+    // if (firstItem && firstItem.articles) {
+    //     return convertCategoryFormat(knowledgeBase)
+    // }
 
     return knowledgeBase
+}
+// Вспомогательная функция для поиска статьи в категориях
+export function findArticleInCategories(knowledgeBase, articleId) {
+    for (const category of Object.values(knowledgeBase)) {
+        if (category.articles) {
+            const article = category.articles.find((a) => a.id === articleId)
+            if (article) {
+                return { article, category }
+            }
+        }
+    }
+    return null
 }
 
 function convertCategoryFormat(categoryData) {
     const flatData = {}
+    let totalArticles = 0
 
     Object.values(categoryData).forEach((category) => {
         if (category.articles && Array.isArray(category.articles)) {
             category.articles.forEach((article) => {
-                flatData[article.id] = {
-                    id: article.id,
-                    title: article.title,
-                    url: article.url,
-                    level: article.level || "concept",
-                    sections: article.sections || [],
-                    progress: article.progress || 0,
-                    applications: article.applications || [],
+                if (article.id && article.title) {
+                    // Сохраняем ВСЕ данные из оригинала, включая применения
+                    flatData[article.id] = {
+                        id: article.id,
+                        title: article.title,
+                        url: article.url,
+                        level: article.level || "concept",
+                        sections: article.sections || [],
+                        progress: article.progress || 0,
+                        applications: article.applications || [],
+                    }
+                    totalArticles++
                 }
             })
         }
     })
 
-    console.log(chalk.green(`✅ Сконвертировано статей: ${Object.keys(flatData).length}`))
+    // Покажем статистику по применениям
+    const appliedArticles = Object.values(flatData).filter(
+        (a) =>
+            (a.applications && a.applications.length > 0) ||
+            (a.sections && a.sections.some((s) => s.applications && s.applications.length > 0))
+    )
+
+    if (appliedArticles.length > 0) {
+        console.log()
+        console.log(chalk.cyan(`📊 Примененных статей: ${appliedArticles.length}`))
+        console.log()
+    }
+
     return flatData
 }
 
@@ -51,31 +81,15 @@ export function updateKnowledgeBase(updater) {
 
 export function getUnusedArticles() {
     const knowledgeBase = getKnowledgeBase()
-    if (!knowledgeBase || Object.keys(knowledgeBase).length === 0) {
-        console.log("📝 База знаний пуста. Заполни её в js-knowledge-data репо!")
-        return []
-    }
+    const allArticles = getAllArticles(knowledgeBase)
 
-    const unused = []
-
-    // Обходим все статьи в плоском формате
-    Object.values(knowledgeBase).forEach((article) => {
-        // Проверяем прогресс и применения
+    const unused = allArticles.filter((article) => {
         const hasApplications = article.applications && article.applications.length > 0
         const hasSectionApplications =
             article.sections &&
             article.sections.some((section) => section.applications && section.applications.length > 0)
 
-        if ((article.progress || 0) < 100 && !hasApplications && !hasSectionApplications) {
-            unused.push({
-                id: article.id,
-                title: article.title,
-                url: article.url,
-                level: article.level,
-                progress: article.progress || 0,
-                sections: article.sections || [],
-            })
-        }
+        return (article.progress || 0) < 100 && !hasApplications && !hasSectionApplications
     })
 
     return unused
@@ -267,50 +281,76 @@ export function aiSuggestWithPlan(featureIdea = "", projectType = "web") {
         hasDetailedPlan: false,
     }
 }
+// Обновленная markAsApplied для работы с оригинальным форматом
 export function markAsApplied(articleId, project = null, commit = null, sectionId = null) {
-    return updateKnowledgeBase((knowledgeBase) => {
-        const article = knowledgeBase[articleId]
-        if (article) {
-            // Обновляем прогресс статьи
-            article.progress = 100
+    console.log(chalk.yellow("🚨 EMERGENCY MODE: Сохраняем напрямую..."))
 
-            // Добавляем применение в конкретную секцию или в основную статью
-            if (project && commit) {
-                let targetSection
+    try {
+        const targetPath = path.join(".js-knowledge-data", "knowledge-base.json")
+        console.log(chalk.blue(`   Сохраняем в: ${path.resolve(targetPath)}`))
 
-                if (sectionId && article.sections) {
-                    targetSection = article.sections.find((s) => s.id === sectionId)
-                }
+        // Загружаем оригинальный файл
+        const originalData = JSON.parse(fs.readFileSync(targetPath, "utf8"))
 
-                const applicationsArray = targetSection ? targetSection.applications || [] : article.applications || []
+        // Находим и обновляем статью
+        let updated = false
+        let targetArticle = null
+        let targetSection = null
 
-                // Проверяем, нет ли уже такого применения
-                const existingApplication = applicationsArray.find(
-                    (app) => app.project === project && app.commit === commit
-                )
+        Object.values(originalData).forEach((category) => {
+            if (category.articles) {
+                const article = category.articles.find((a) => a.id === articleId)
+                if (article && article.sections) {
+                    const section = article.sections.find((s) => s.id === sectionId)
+                    if (section) {
+                        if (!section.applications) section.applications = []
 
-                if (!existingApplication) {
-                    const newApplication = {
-                        project: project,
-                        commit: commit,
-                        commitUrl: `https://github.com/${project}/commit/${commit}`,
-                    }
+                        // ПРОВЕРКА ДУБЛИРОВАНИЯ: ищем существующее применение
+                        const existingApplication = section.applications.find(
+                            (app) => app.project === project && app.commit === commit
+                        )
 
-                    applicationsArray.push(newApplication)
+                        if (existingApplication) {
+                            console.log(chalk.red(`   ❌ Применение уже существует!`))
+                            console.log(chalk.gray(`      Проект: ${project}, Коммит: ${commit}`))
+                            return { success: false, error: "Application already exists" }
+                        }
 
-                    // Сохраняем обратно в статью или секцию
-                    if (targetSection) {
-                        targetSection.applications = applicationsArray
-                    } else {
-                        article.applications = applicationsArray
+                        // Добавляем новое применение
+                        section.applications.push({
+                            project: project,
+                            commit: commit,
+                            date: new Date().toISOString(),
+                            commitUrl: `https://github.com/${project}/commit/${commit}`,
+                        })
+                        updated = true
+                        targetArticle = article
+                        targetSection = section
+                        console.log(chalk.green(`   ✅ Применение добавлено к подтеме: ${section.title}`))
                     }
                 }
             }
+        })
 
-            return { success: true, article }
+        if (updated && targetArticle) {
+            // ОБНОВЛЯЕМ ПРОГРЕСС
+            const oldProgress = targetArticle.progress || 0
+            const newProgress = calculateArticleProgress(targetArticle)
+            targetArticle.progress = newProgress
+            console.log(chalk.green(`   📊 Прогресс обновлен: ${oldProgress}% → ${newProgress}%`))
+
+            // Сохраняем обратно
+            fs.writeFileSync(targetPath, JSON.stringify(originalData, null, 2))
+            console.log(chalk.green(`   ✅ Файл успешно обновлен!`))
+            return { success: true }
+        } else {
+            console.log(chalk.red(`   ❌ Не удалось найти статью/подтему`))
+            return { success: false }
         }
+    } catch (error) {
+        console.log(chalk.red(`   ❌ Ошибка: ${error.message}`))
         return { success: false }
-    })
+    }
 }
 
 export function markAsStudied(articleId) {
@@ -326,41 +366,43 @@ export function markAsStudied(articleId) {
 
 export function getAppliedArticles() {
     const knowledgeBase = getKnowledgeBase()
-    const applied = Object.values(knowledgeBase).filter((article) => article.progress === 100)
+    // const applied = Object.values(knowledgeBase).filter((article) => article.progress === 100)
 
-    // Собираем информацию о применениях
-    return applied.map((article) => {
-        const applications = []
-        let totalApplications = 0
+    // // Собираем информацию о применениях
+    // return applied.map((article) => {
+    //     const applications = []
+    //     let totalApplications = 0
 
-        // Применения в основной статье
-        if (article.applications) {
-            applications.push(...article.applications)
-            totalApplications += article.applications.length
-        }
+    //     // Применения в основной статье
+    //     if (article.applications) {
+    //         applications.push(...article.applications)
+    //         totalApplications += article.applications.length
+    //     }
 
-        // Применения в секциях
-        if (article.sections) {
-            article.sections.forEach((section) => {
-                if (section.applications) {
-                    applications.push(
-                        ...section.applications.map((app) => ({
-                            ...app,
-                            section: section.title,
-                        }))
-                    )
-                    totalApplications += section.applications.length
-                }
-            })
-        }
+    //     // Применения в секциях
+    //     if (article.sections) {
+    //         article.sections.forEach((section) => {
+    //             if (section.applications) {
+    //                 applications.push(
+    //                     ...section.applications.map((app) => ({
+    //                         ...app,
+    //                         section: section.title,
+    //                     }))
+    //                 )
+    //                 totalApplications += section.applications.length
+    //             }
+    //         })
+    //     }
 
-        return {
-            ...article,
-            applications: applications,
-            applicationCount: totalApplications,
-            projects: [...new Set(applications.map((app) => app.project))],
-        }
-    })
+    //     return {
+    //         ...article,
+    //         applications: applications,
+    //         applicationCount: totalApplications,
+    //         projects: [...new Set(applications.map((app) => app.project))],
+    //     }
+    // })
+
+    return knowledgeBase
 }
 
 export function isCommitAlreadyLinked(articleId, project, commit, sectionId = null) {
@@ -400,27 +442,23 @@ export function isCommitAlreadyLinked(articleId, project, commit, sectionId = nu
     return false
 }
 
+export function getAllArticles(knowledgeBase) {
+    const articles = []
+    Object.values(knowledgeBase).forEach((category) => {
+        if (category.articles) {
+            articles.push(...category.articles)
+        }
+    })
+    return articles
+}
+
 export function findCommitUsage(commit, targetProject = null) {
     const knowledgeBase = getKnowledgeBase()
     const usages = []
+    const allArticles = getAllArticles(knowledgeBase)
 
-    // Ищем где используется этот коммит
-    Object.values(knowledgeBase).forEach((article) => {
-        // Проверяем применения в основной статье
-        if (article.applications) {
-            article.applications.forEach((app) => {
-                if (app.commit === commit && (!targetProject || app.project === targetProject)) {
-                    usages.push({
-                        article: article.title,
-                        articleId: article.id,
-                        project: app.project,
-                        section: null, // Основная статья
-                    })
-                }
-            })
-        }
-
-        // Проверяем применения в секциях
+    allArticles.forEach((article) => {
+        // Проверяем применения в подтемах
         if (article.sections) {
             article.sections.forEach((section) => {
                 if (section.applications) {
@@ -442,31 +480,15 @@ export function findCommitUsage(commit, targetProject = null) {
 
     return usages
 }
-
-/**
- * Получить все статьи примененные в конкретном проекте
- */
 export function getArticlesByProject(projectName) {
     const knowledgeBase = getKnowledgeBase()
     const projectArticles = []
+    const allArticles = getAllArticles(knowledgeBase)
 
-    Object.values(knowledgeBase).forEach((article) => {
+    allArticles.forEach((article) => {
         const articleApplications = []
 
-        // Применения в основной статье
-        if (article.applications) {
-            article.applications.forEach((app) => {
-                if (app.project === projectName) {
-                    articleApplications.push({
-                        ...app,
-                        section: null,
-                        sectionId: null,
-                    })
-                }
-            })
-        }
-
-        // Применения в секциях
+        // Применения в подтемах
         if (article.sections) {
             article.sections.forEach((section) => {
                 if (section.applications) {
@@ -499,14 +521,12 @@ export function getArticlesByProject(projectName) {
     return projectArticles
 }
 
-/**
- * Получить прогресс по уровням
- */
 export function getProgressByLevel() {
     const knowledgeBase = getKnowledgeBase()
     const levels = {}
+    const allArticles = getAllArticles(knowledgeBase)
 
-    Object.values(knowledgeBase).forEach((article) => {
+    allArticles.forEach((article) => {
         const level = article.level || "unknown"
         if (!levels[level]) {
             levels[level] = {
@@ -529,4 +549,96 @@ export function getProgressByLevel() {
     })
 
     return levels
+}
+
+/**
+ * Рассчитывает прогресс статьи на основе подтем
+ */
+export function calculateArticleProgress(article) {
+    // Если нет подтем - используем прогресс статьи
+    if (!article.sections || article.sections.length === 0) {
+        return article.progress || 0
+    }
+
+    // Считаем количество подтем с применениями
+    let appliedSections = 0
+
+    article.sections.forEach((section) => {
+        // Подтема считается примененной если есть хотя бы одно применение
+        if (section.applications && section.applications.length > 0) {
+            appliedSections++
+        }
+    })
+
+    // Прогресс = (примененные подтемы / все подтемы) * 100
+    const progress = Math.round((appliedSections / article.sections.length) * 100)
+
+    console.log(chalk.gray(`   ${appliedSections}/${article.sections.length} подтем применено = ${progress}%`))
+
+    return progress
+}
+
+/**
+ * Статистика по статье
+ */
+export function getArticleStats(article) {
+    const stats = {
+        totalSections: article.sections ? article.sections.length : 0,
+        completedSections: 0,
+        appliedSections: 0,
+    }
+
+    if (article.sections) {
+        article.sections.forEach((section) => {
+            if (section.applications && section.applications.length > 0) {
+                stats.appliedSections++
+                stats.completedSections++
+            } else if (article.progress === 100) {
+                stats.completedSections++
+            }
+        })
+    }
+
+    return stats
+}
+
+/**
+ * Создает прогресс-бар
+ */
+export function createProgressBar(progress, length = 20) {
+    const filled = Math.round((progress / 100) * length)
+    const empty = length - filled
+    return "█".repeat(filled) + "░".repeat(empty)
+}
+
+/**
+ * Обновляет прогресс статьи при применении подтемы
+ */
+export function updateArticleProgress(articleId) {
+    console.log(chalk.blue(`📊 Обновляем прогресс для статьи ${articleId}...`))
+
+    const knowledgeBase = getKnowledgeBase()
+    const found = findArticleInCategories(knowledgeBase, articleId)
+
+    if (!found) {
+        console.log(chalk.red(`❌ Статья ${articleId} не найдена для обновления прогресса`))
+        return { success: false }
+    }
+
+    const { article } = found
+    const oldProgress = article.progress || 0
+
+    // Рассчитываем новый прогресс
+    const newProgress = calculateArticleProgress(article)
+    article.progress = newProgress
+
+    console.log(chalk.green(`✅ Прогресс обновлен: ${oldProgress}% → ${newProgress}%`))
+
+    // Сохраняем изменения
+    if (saveKnowledgeBase(knowledgeBase)) {
+        return { success: true, progress: newProgress }
+    } else {
+        console.log(chalk.red("❌ Ошибка при сохранении прогресса"))
+        return { success: false }
+    }
 }

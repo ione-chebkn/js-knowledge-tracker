@@ -83,41 +83,115 @@ function findDataFile() {
             return filePath
         }
     }
-    return DATA_FILE // возвращаем основной путь, даже если файла нет
+    // Если файлов нет, создаем основной
+    const mainFile = path.join(LOCAL_DATA_DIR, "knowledge-base.json")
+    if (!fs.existsSync(mainFile)) {
+        fs.writeFileSync(mainFile, JSON.stringify({}, null, 2))
+    }
+    return mainFile
 }
 
 function pushChanges(commitMessage) {
     try {
         execSync("git add knowledge-base.json", { cwd: LOCAL_DATA_DIR })
+
+        // Проверяем есть ли изменения
+        const status = execSync("git status --porcelain knowledge-base.json", {
+            cwd: LOCAL_DATA_DIR,
+            encoding: "utf8",
+        })
+
+        if (!status.trim()) {
+            console.log(chalk.gray("   Нет изменений для коммита"))
+            return true
+        }
+
         execSync(`git commit -m "${commitMessage}"`, { cwd: LOCAL_DATA_DIR })
-        execSync("git push", { cwd: LOCAL_DATA_DIR, stdio: "inherit" })
+        execSync("git push", { cwd: LOCAL_DATA_DIR })
+        console.log(chalk.green("✅ Изменения запушены в репозиторий"))
         return true
     } catch (error) {
-        console.log("⚠️  Изменения сохранены локально, но не запушены")
+        console.log(chalk.yellow("⚠️  Не удалось запушеть изменения:"), error.message)
+        return false
+    }
+}
+// Функция для загрузки оригинальных данных БЕЗ конвертации
+function loadOriginalKnowledgeBase() {
+    try {
+        const dataFile = findDataFile()
+        if (fs.existsSync(dataFile)) {
+            return JSON.parse(fs.readFileSync(dataFile, "utf8"))
+        }
+    } catch (error) {
+        console.error("❌ Ошибка загрузки оригинальных данных:", error.message)
+    }
+    return null
+}
+
+export function saveKnowledgeBase(data) {
+    try {
+        const targetPath = path.join(LOCAL_DATA_DIR, "knowledge-base.json")
+
+        console.log(chalk.blue(`💾 Сохраняем изменения...`))
+        console.log(chalk.gray(`   Путь: ${targetPath}`))
+        console.log(chalk.gray(`   Тип данных: ${typeof data}`))
+        console.log(chalk.gray(`   Ключи: ${Object.keys(data).slice(0, 3).join(", ")}...`))
+
+        // Проверяем что папка существует
+        if (!fs.existsSync(LOCAL_DATA_DIR)) {
+            fs.mkdirSync(LOCAL_DATA_DIR, { recursive: true })
+            console.log(chalk.yellow(`   Создана папка: ${LOCAL_DATA_DIR}`))
+        }
+
+        // Сохраняем данные
+        fs.writeFileSync(targetPath, JSON.stringify(data, null, 2), "utf8")
+
+        // Проверяем что сохранилось
+        if (fs.existsSync(targetPath)) {
+            const fileInfo = fs.statSync(targetPath)
+            const savedData = JSON.parse(fs.readFileSync(targetPath, "utf8"))
+            console.log(chalk.green(`✅ Успешно сохранено!`))
+            console.log(chalk.gray(`   Размер файла: ${fileInfo.size} байт`))
+            console.log(chalk.gray(`   Ключей в файле: ${Object.keys(savedData).length}`))
+
+            // Проверим сохранилось ли наше применение
+            let foundApplication = false
+            Object.values(savedData).forEach((category) => {
+                if (category.articles) {
+                    category.articles.forEach((article) => {
+                        if (article.id === "keyboard-events" && article.sections) {
+                            article.sections.forEach((section) => {
+                                if (section.applications && section.applications.length > 0) {
+                                    foundApplication = true
+                                    console.log(chalk.green(`   🎯 Применение найдено в файле!`))
+                                }
+                            })
+                        }
+                    })
+                }
+            })
+
+            if (!foundApplication) {
+                console.log(chalk.red(`   ❌ Применение НЕ найдено в файле!`))
+            }
+        } else {
+            console.log(chalk.red("❌ Файл не был создан!"))
+            return false
+        }
+
+        return true
+    } catch (error) {
+        console.log(chalk.red("❌ Ошибка сохранения:"), error.message)
         return false
     }
 }
 
-export function saveKnowledgeBase(data) {
-    ensureKnowledgeRepo()
-    try {
-        const dataFile = findDataFile()
-        fs.writeFileSync(dataFile, JSON.stringify(data, null, 2))
-        const commitMsg = `feat: update knowledge - ${new Date().toLocaleString()}`
-        pushChanges(commitMsg)
-        return true
-    } catch (error) {
-        console.error("❌ Ошибка сохранения:", error.message)
-        return false
-    }
-}
 export function loadKnowledgeBase() {
     ensureKnowledgeRepo()
     try {
         const dataFile = findDataFile()
         if (fs.existsSync(dataFile)) {
             const data = JSON.parse(fs.readFileSync(dataFile, "utf8"))
-            console.log(chalk.gray(`📁 Используется файл: ${path.basename(dataFile)}`))
             return data
         } else {
             console.log(chalk.yellow("⚠️  Файл базы знаний не найден!"))
@@ -173,6 +247,20 @@ export function askForConfirmation(question) {
         rl.question(question, (answer) => {
             rl.close()
             resolve(answer.toLowerCase() === "y" || answer.toLowerCase() === "yes")
+        })
+    })
+}
+
+export function askQuestion(question) {
+    const rl = readline.createInterface({
+        input: process.stdin,
+        output: process.stdout,
+    })
+
+    return new Promise((resolve) => {
+        rl.question(question, (answer) => {
+            rl.close()
+            resolve(answer)
         })
     })
 }
