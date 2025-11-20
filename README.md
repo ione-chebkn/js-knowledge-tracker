@@ -1,63 +1,69 @@
-# JavaScript Knowledge Tracker
+# JS Knowledge Tracker 🚀
 
-CLI tool for tracking JavaScript learning progress by connecting theory with practice through Git commits.
+CLI инструмент для трекинга прогресса изучения JavaScript через практическое применение.
 
-## 🚀 Features
+## 🎯 Что это?
 
--   📚 Track JavaScript learning progress from [learn.javascript.ru](https://learn.javascript.ru)
--   🔗 Connect theory articles with real project commits
--   📊 Visualize progress with statistics
--   🔍 Validate projects and commits on GitHub
--   🔄 Automatic synchronization between projects
+Система, которая связывает теорию (статьи learn.javascript.ru) с практикой (ваши коммиты в проектах).
+Превращает "изучение JavaScript" из абстрактной цели в измеримый процесс.
 
-## 📦 Installation
+## 📦 Установка
 
 ```bash
 npm install -g js-knowledge-tracker
 ```
 
-## 🛠️ Usage
+## 🚀 Использование
 
-```bash
-# Show available topics
-jstrack suggest
+### Базовые команды
 
-# Mark article as applied
-jstrack apply <articleId> --commit <hash> --project <project>
-
-# Show applied articles
-jstrack list --applied
-
-# Show statistics
-jstrack stats
-
-# Show workflow guide
-jstrack workflow
+```
+jstrack search "события"           # Умный поиск статей и подтем
+jstrack suggest "валидация формы"  # AI план для реализации фичи
+jstrack list --unused              # Неиспользованные темы
+jstrack view closures              # Детальный просмотр статьи
+jstrack stats                      # Статистика прогресса
 
 ```
 
-## 🎯 Example
+### Пример
 
-```bash
-# Get learning suggestions
-jstrack suggest
+# Найти подходящие статьи для работы с клавиатурой
 
-# Apply article after implementing feature
-jstrack apply closure --commit $(git log -1 --pretty=%H) --project my-app
+jstrack search "клавиатура"
 
-# Check progress
+# Получить пошаговый план реализации
+
+jstrack suggest "обработка клавиатурных событий"
+
+# Отметить применение
+
+jstrack apply introduction-browser-events --commit c54b388 --section keyboard-events
+
+# Посмотреть прогресс
+
 jstrack stats
+
+## 🏗️ Архитектура
+
+```
+Ваш проект (js-calculator)
+         ↓
+   Git коммиты (c54b388)
+         ↓
+js-knowledge-tracker (связь)
+         ↓
+js-knowledge-data (статьи)
 ```
 
-## 📁 Architecture
+## 🔧 Для разработчиков
 
-js-knowledge-tracker - CLI tool (this package)
+```
+# Клонировать и установить
+git clone https://github.com/ione-chebkn/js-knowledge-tracker
+npm install
+npm link  # для локальной разработки
 
-js-knowledge-data - Central knowledge database repository
-
-Your projects - Connect theory with practice
-
-## 🔗 Links
-
-[Knowledge Database](https://github.com/ione-chebkn/js-knowledge-data)
-[Learn JavaScript](https://learn.javascript.ru/)
+# Запуск тестов
+npm test
+```
