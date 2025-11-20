@@ -91,51 +91,12 @@ function findDataFile() {
     return mainFile
 }
 
-function pushChanges(commitMessage) {
-    try {
-        execSync("git add knowledge-base.json", { cwd: LOCAL_DATA_DIR })
-
-        // Проверяем есть ли изменения
-        const status = execSync("git status --porcelain knowledge-base.json", {
-            cwd: LOCAL_DATA_DIR,
-            encoding: "utf8",
-        })
-
-        if (!status.trim()) {
-            console.log(chalk.gray("   Нет изменений для коммита"))
-            return true
-        }
-
-        execSync(`git commit -m "${commitMessage}"`, { cwd: LOCAL_DATA_DIR })
-        execSync("git push", { cwd: LOCAL_DATA_DIR })
-        console.log(chalk.green("✅ Изменения запушены в репозиторий"))
-        return true
-    } catch (error) {
-        console.log(chalk.yellow("⚠️  Не удалось запушеть изменения:"), error.message)
-        return false
-    }
-}
-// Функция для загрузки оригинальных данных БЕЗ конвертации
-function loadOriginalKnowledgeBase() {
-    try {
-        const dataFile = findDataFile()
-        if (fs.existsSync(dataFile)) {
-            return JSON.parse(fs.readFileSync(dataFile, "utf8"))
-        }
-    } catch (error) {
-        console.error("❌ Ошибка загрузки оригинальных данных:", error.message)
-    }
-    return null
-}
-
-export function saveKnowledgeBase(data) {
+export function saveKnowledgeBase(data, context = {}) {
     try {
         const targetPath = path.join(LOCAL_DATA_DIR, "knowledge-base.json")
 
         console.log(chalk.blue(`💾 Сохраняем изменения...`))
         console.log(chalk.gray(`   Путь: ${targetPath}`))
-        console.log(chalk.gray(`   Тип данных: ${typeof data}`))
-        console.log(chalk.gray(`   Ключи: ${Object.keys(data).slice(0, 3).join(", ")}...`))
 
         // Проверяем что папка существует
         if (!fs.existsSync(LOCAL_DATA_DIR)) {
@@ -153,36 +114,65 @@ export function saveKnowledgeBase(data) {
             console.log(chalk.green(`✅ Успешно сохранено!`))
             console.log(chalk.gray(`   Размер файла: ${fileInfo.size} байт`))
             console.log(chalk.gray(`   Ключей в файле: ${Object.keys(savedData).length}`))
-
-            // Проверим сохранилось ли наше применение
-            let foundApplication = false
-            Object.values(savedData).forEach((category) => {
-                if (category.articles) {
-                    category.articles.forEach((article) => {
-                        if (article.id === "keyboard-events" && article.sections) {
-                            article.sections.forEach((section) => {
-                                if (section.applications && section.applications.length > 0) {
-                                    foundApplication = true
-                                    console.log(chalk.green(`   🎯 Применение найдено в файле!`))
-                                }
-                            })
-                        }
-                    })
-                }
-            })
-
-            if (!foundApplication) {
-                console.log(chalk.red(`   ❌ Применение НЕ найдено в файле!`))
-            }
         } else {
             console.log(chalk.red("❌ Файл не был создан!"))
             return false
+        }
+
+        // 🔥 АВТОМАТИЧЕСКИЕ КОММИТЫ
+        try {
+            const gitDir = LOCAL_DATA_DIR
+            const isGitRepo = fs.existsSync(path.join(gitDir, ".git"))
+
+            if (!isGitRepo) {
+                console.log(chalk.blue("🔧 Инициализируем git репозиторий..."))
+                execSync("git init", { cwd: gitDir, stdio: "pipe" })
+                execSync("git add .", { cwd: gitDir, stdio: "pipe" })
+                execSync('git commit -m "feat: initial knowledge base"', { cwd: gitDir, stdio: "pipe" })
+                console.log(chalk.green("✅ Git репозиторий инициализирован"))
+            }
+
+            // Добавляем и коммитим изменения
+            execSync("git add knowledge-base.json", { cwd: gitDir, stdio: "pipe" })
+
+            // Проверяем есть ли изменения для коммита
+            const status = execSync("git status --porcelain", { cwd: gitDir, encoding: "utf8" })
+            if (status.includes("knowledge-base.json")) {
+                const commitMessage = generateCommitMessage(context)
+                execSync(`git commit -m "${commitMessage}"`, { cwd: gitDir, stdio: "pipe" })
+                console.log(chalk.green(`✅ Закоммичено: ${commitMessage}`))
+
+                // Пытаемся запушить
+                try {
+                    execSync("git push", { cwd: gitDir, stdio: "pipe" })
+                    console.log(chalk.green("✅ Изменения отправлены в remote"))
+                } catch (pushError) {
+                    console.log(chalk.yellow("⚠️  Не удалось отправить в remote:"))
+                    console.log(chalk.gray("   Настройте remote репозиторий"))
+                }
+            } else {
+                console.log(chalk.gray("   Нет изменений для коммита"))
+            }
+        } catch (gitError) {
+            console.log(chalk.yellow("⚠️  Git операции пропущены:"), gitError.message)
         }
 
         return true
     } catch (error) {
         console.log(chalk.red("❌ Ошибка сохранения:"), error.message)
         return false
+    }
+}
+
+// Функция для генерации сообщений коммитов
+function generateCommitMessage(context) {
+    switch (context.type) {
+        case "apply":
+            return `feat: ${context.section} → ${context.project}`
+        case "unapply":
+            return `fix: remove ${context.section}`
+        default:
+            return `chore: update knowledge base`
     }
 }
 

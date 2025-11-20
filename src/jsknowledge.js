@@ -5,14 +5,10 @@ import chalk from "chalk"
 import {
     aiSuggestWithPlan,
     markAsApplied,
-    markAsStudied,
     getKnowledgeBase,
-    isCommitAlreadyLinked,
     findCommitUsage,
     getArticlesByProject,
-    getProgressByLevel,
     calculateArticleProgress,
-    getArticleStats,
     createProgressBar,
     updateArticleProgress,
     getAllArticles,
@@ -23,6 +19,7 @@ import {
     validateProjectExists,
     validateCommitExists,
     askForConfirmation,
+    saveKnowledgeBase,
     askQuestion,
 } from "./storage.js"
 import fs from "fs"
@@ -52,13 +49,31 @@ program
         const allArticles = getAllArticles(knowledgeBase)
 
         const results = allArticles
-            .filter(
-                (article) =>
-                    article.title.toLowerCase().includes(query.toLowerCase()) ||
-                    article.id.includes(query) ||
-                    (article.sections &&
-                        article.sections.some((s) => s.title.toLowerCase().includes(query.toLowerCase())))
-            )
+            .filter((article) => {
+                const queryLower = query.toLowerCase()
+
+                // 🔍 Проверяем ВСЕ поля статьи
+                if (
+                    article.title.toLowerCase().includes(queryLower) ||
+                    article.id.includes(queryLower) ||
+                    article.url.toLowerCase().includes(queryLower) ||
+                    (article.description && article.description.toLowerCase().includes(queryLower))
+                ) {
+                    return true
+                }
+
+                // 🔍 Проверяем ВСЕ поля подтем
+                if (article.sections) {
+                    return article.sections.some(
+                        (section) =>
+                            section.title.toLowerCase().includes(queryLower) ||
+                            section.id.includes(queryLower) ||
+                            section.url.toLowerCase().includes(queryLower)
+                    )
+                }
+
+                return false
+            })
             .map((article) => {
                 // Считаем общее количество применений
                 const applicationsCount =
@@ -109,15 +124,25 @@ function calculateRelevance(article, query) {
     let score = 0
     const queryLower = query.toLowerCase()
 
-    // Поиск в заголовке статьи
-    if (article.title.toLowerCase().includes(queryLower)) score += 3
-    if (article.id.includes(query)) score += 2
+    // 🔍 ПОИСК ПО ВСЕМ ПОЛЯМ СТАТЬИ
+    const articleFields = [article.title, article.id, article.url, article.description || "", article.level || ""]
 
-    // Поиск в подтемах
+    articleFields.forEach((field) => {
+        if (field.toLowerCase().includes(queryLower)) {
+            score += field === article.title ? 3 : 2 // Больше веса заголовку
+        }
+    })
+
+    // 🔍 ПОИСК ПО ВСЕМ ПОЛЯМ ПОДТЕМ
     if (article.sections) {
         article.sections.forEach((section) => {
-            if (section.title.toLowerCase().includes(queryLower)) score += 2
-            if (section.id.includes(query)) score += 1
+            const sectionFields = [section.title, section.id, section.url]
+
+            sectionFields.forEach((field) => {
+                if (field.toLowerCase().includes(queryLower)) {
+                    score += field === section.title ? 2 : 1
+                }
+            })
         })
     }
 
@@ -375,20 +400,14 @@ program
             if (progressResult && progressResult.success) {
                 console.log(chalk.gray(`   Прогресс статьи: ${progressResult.progress}%`))
             }
-        }
-    })
 
-// Команда для отметки статьи как изученной
-program
-    .command("study <articleId>")
-    .description("Mark article as studied")
-    .action((articleId) => {
-        const result = markAsStudied(articleId)
-        if (result.success) {
-            console.log(chalk.blue.bold(`📚 Статья "${result.article.title}" отмечена как изученная!`))
-            console.log(`📚 ${formatUrl(result.article.url)}`)
-        } else {
-            console.log(chalk.red.bold(`❌ Статья с ID "${articleId}" не найдена`))
+            const knowledgeBase = getKnowledgeBase()
+
+            saveKnowledgeBase(knowledgeBase, {
+                type: "apply",
+                section: result.sectionTitle,
+                project: result.project,
+            })
         }
     })
 
@@ -521,20 +540,42 @@ program
     .description("Show learning statistics")
     .action(() => {
         const knowledgeBase = getKnowledgeBase()
-        const articles = Object.values(knowledgeBase)
 
-        const completed = articles.filter((a) => (a.progress || 0) === 100).length
-        const inProgress = articles.filter((a) => (a.progress || 0) > 0 && (a.progress || 0) < 100).length
-        const notStarted = articles.filter((a) => (a.progress || 0) === 0).length
-        const total = articles.length
+        // Получаем ВСЕ статьи из всех категорий
+        const allArticles = getAllArticles(knowledgeBase)
+        const totalArticles = allArticles.length
+
+        const completed = allArticles.filter((a) => (a.progress || 0) === 100).length
+        const inProgress = allArticles.filter((a) => (a.progress || 0) > 0 && (a.progress || 0) < 100).length
+        const notStarted = allArticles.filter((a) => (a.progress || 0) === 0).length
 
         console.log(chalk.blue.bold("\n📊 Статистика обучения\n"))
-        console.log(`🟢 Завершено: ${completed}/${total}`)
-        console.log(`🟡 В процессе: ${inProgress}/${total}`)
-        console.log(`⚪ Не начато: ${notStarted}/${total}`)
+        console.log(`🟢 Завершено: ${completed}/${totalArticles}`)
+        console.log(`🟡 В процессе: ${inProgress}/${totalArticles}`)
+        console.log(`⚪ Не начато: ${notStarted}/${totalArticles}`)
+
+        // Дополнительная статистика
+        const totalApplications = allArticles.reduce((total, article) => {
+            const articleApps = article.applications?.length || 0
+            const sectionApps =
+                article.sections?.reduce((sum, section) => sum + (section.applications?.length || 0), 0) || 0
+            return total + articleApps + sectionApps
+        }, 0)
+
+        console.log(chalk.cyan(`\n📈 Всего применений: ${totalApplications}`))
+
+        // Прогресс в процентах
+        const overallProgress = totalArticles > 0 ? Math.round((completed / totalArticles) * 100) : 0
+
+        console.log(chalk.magenta(`🎯 Общий прогресс: ${overallProgress}%`))
+        console.log(chalk.gray(`   ${createProgressBar(overallProgress)}`))
 
         if (completed > 0) {
             console.log(chalk.green("\n🎉 Отличный прогресс! Продолжай в том же духе! 🚀"))
+        } else if (inProgress > 0) {
+            console.log(chalk.yellow("\n💪 Ты на правильном пути! Продолжай изучать JavaScript!"))
+        } else {
+            console.log(chalk.blue("\n🚀 Начни своё путешествие в JavaScript! Выбери первую статью: jstrack list"))
         }
     })
 
@@ -691,6 +732,310 @@ async function executeApply(articleId, project, commit, sectionId, skipConfirmat
         console.log(chalk.red("❌ Ошибка при сохранении"))
         return { success: false }
     }
+}
+
+// Добавляем в программу команду unapply
+program
+    .command("unapply")
+    .description("Remove application of knowledge to commit")
+    .option("-c, --commit <commit>", "Commit hash to remove")
+    .option("-a, --article <articleId>", "Article ID")
+    .option("-s, --section <sectionId>", "Section ID")
+    .option("--yes", "Skip confirmation prompt")
+    .action(async (options) => {
+        console.log(chalk.blue.bold("\n🗑️  Удаление применения\n"))
+
+        const knowledgeBase = getKnowledgeBase()
+
+        // РЕЖИМ 1: Интерактивный поиск применений для удаления
+        if (!options.commit && !options.article) {
+            await interactiveUnapply(knowledgeBase, options)
+            return
+        }
+
+        // РЕЖИМ 2: Прямое удаление по критериям
+        await directUnapply(knowledgeBase, options)
+    })
+
+// Интерактивный режим удаления
+async function interactiveUnapply(knowledgeBase, options) {
+    try {
+        // Собираем все применения
+        const allApplications = getAllApplications(knowledgeBase)
+
+        if (allApplications.length === 0) {
+            console.log(chalk.yellow("🤷 Нет применений для удаления"))
+            return
+        }
+
+        console.log(chalk.cyan(`📚 Найдено применений: ${allApplications.length}\n`))
+
+        // Показываем список применений
+        let optionNumber = 1
+        const optionsMap = new Map()
+
+        allApplications.forEach((app, index) => {
+            console.log(chalk.blue(`${optionNumber}. ${app.sectionTitle}`))
+            console.log(chalk.gray(`   Статья: ${app.articleTitle}`))
+            console.log(chalk.gray(`   ID: ${app.articleId} --section ${app.sectionId}`))
+            console.log(chalk.gray(`   Коммит: ${app.commit} | Проект: ${app.project}`))
+            console.log(chalk.gray(`   Дата: ${new Date(app.date).toLocaleDateString()}`))
+            console.log(`   📖 ${formatUrl(app.sectionUrl)}`)
+
+            optionsMap.set(optionNumber.toString(), app)
+            optionNumber++
+            console.log("")
+        })
+
+        const choice = await askQuestion(
+            `Выберите применение для удаления (1-${optionNumber - 1}) или "all" для всех: `
+        )
+
+        let removedCount = 0
+        const affectedArticles = new Set()
+        let sectionTitleForContext = "multiple sections" // 🔥 ОПРЕДЕЛЯЕМ ПЕРЕМЕННУЮ ЗАРАНЕЕ
+
+        if (choice.toLowerCase() === "all") {
+            // Удаление всех применений
+            console.log(chalk.red("⚠️  Вы собираетесь удалить ВСЕ применения!"))
+            const proceed = options.yes || (await askForConfirmation("Продолжить? (y/N) "))
+
+            if (!proceed) {
+                console.log(chalk.gray("❌ Отменено"))
+                return
+            }
+
+            // Удаляем все применения
+            allApplications.forEach((app) => {
+                if (removeApplication(knowledgeBase, app.articleId, app.sectionId, app.commit)) {
+                    removedCount++
+                    affectedArticles.add(app.articleId)
+                }
+            })
+
+            console.log(chalk.green(`✅ Удалено применений: ${removedCount}`))
+            sectionTitleForContext = "all applications" // 🔥 УСТАНАВЛИВАЕМ ДЛЯ КОНТЕКСТА
+        } else if (optionsMap.has(choice)) {
+            // Удаление одного применения
+            const selected = optionsMap.get(choice)
+
+            console.log(chalk.yellow(`⚠️  Удаляем применение:`))
+            console.log(chalk.gray(`   Подтема: ${selected.sectionTitle}`))
+            console.log(chalk.gray(`   Коммит: ${selected.commit}`))
+
+            const proceed = options.yes || (await askForConfirmation("Продолжить? (y/N) "))
+
+            if (!proceed) {
+                console.log(chalk.gray("❌ Отменено"))
+                return
+            }
+
+            if (removeApplication(knowledgeBase, selected.articleId, selected.sectionId, selected.commit)) {
+                removedCount++
+                affectedArticles.add(selected.articleId)
+                sectionTitleForContext = selected.sectionTitle // 🔥 СОХРАНЯЕМ НАЗВАНИЕ ПОДТЕМЫ
+                console.log(chalk.green("✅ Применение удалено"))
+            } else {
+                console.log(chalk.red("❌ Не удалось удалить применение"))
+            }
+        } else {
+            console.log(chalk.red("❌ Неверный выбор"))
+            return
+        }
+
+        // 🔥 ВАЖНО: Сохраняем и обновляем прогресс ТОЛЬКО ОДИН РАЗ после всех изменений
+        if (removedCount > 0) {
+            // Обновляем прогресс для затронутых статей
+            affectedArticles.forEach((articleId) => {
+                updateArticleProgress(articleId)
+            })
+
+            // 🔥 Сохраняем базу знаний ОДИН РАЗ с контекстом
+            saveKnowledgeBase(knowledgeBase, {
+                type: "unapply",
+                section: sectionTitleForContext, // 🔥 ИСПОЛЬЗУЕМ ОПРЕДЕЛЕННУЮ ПЕРЕМЕННУЮ
+            })
+        }
+    } catch (error) {
+        console.log(chalk.red("❌ Ошибка:"), error.message)
+    }
+}
+
+// Прямое удаление по критериям
+async function directUnapply(knowledgeBase, options) {
+    if (!options.commit) {
+        console.log(chalk.red("❌ Для прямого удаления укажите коммит через --commit <hash>"))
+        return
+    }
+
+    // Ищем применения по критериям
+    const applications = findApplications(knowledgeBase, options)
+
+    if (applications.length === 0) {
+        console.log(chalk.yellow("🤷 Применения не найдены"))
+        console.log(chalk.gray("Критерии поиска:"))
+        if (options.commit) console.log(chalk.gray(`   Коммит: ${options.commit}`))
+        if (options.article) console.log(chalk.gray(`   Статья: ${options.article}`))
+        if (options.section) console.log(chalk.gray(`   Подтема: ${options.section}`))
+        return
+    }
+
+    console.log(chalk.cyan(`📚 Найдено применений: ${applications.length}\n`))
+
+    applications.forEach((app, index) => {
+        console.log(chalk.blue(`${index + 1}. ${app.sectionTitle}`))
+        console.log(chalk.gray(`   Статья: ${app.articleTitle}`))
+        console.log(chalk.gray(`   ID: ${app.articleId} --section ${app.sectionId}`))
+        console.log(chalk.gray(`   Коммит: ${app.commit} | Проект: ${app.project}`))
+        console.log("")
+    })
+
+    const proceed = options.yes || (await askForConfirmation(`Удалить ${applications.length} применение(й)? (y/N) `))
+
+    if (!proceed) {
+        console.log(chalk.gray("❌ Отменено"))
+        return
+    }
+
+    // Удаляем применения
+    let removedCount = 0
+    const affectedArticles = new Set()
+
+    applications.forEach((app) => {
+        if (removeApplication(knowledgeBase, app.articleId, app.sectionId, app.commit)) {
+            removedCount++
+            affectedArticles.add(app.articleId)
+        }
+    })
+
+    console.log(chalk.green(`✅ Удалено применений: ${removedCount}`))
+
+    // 🔥 ВАЖНО: Сохраняем и обновляем прогресс ТОЛЬКО ОДИН РАЗ после всех изменений
+    if (removedCount > 0) {
+        // Обновляем прогресс для затронутых статей
+        affectedArticles.forEach((articleId) => {
+            updateArticleProgress(articleId)
+        })
+
+        // 🔥 Определяем sectionTitle для контекста
+        let sectionTitleForContext = applications.length === 1 ? applications[0].sectionTitle : "multiple sections"
+
+        // 🔥 Сохраняем базу знаний ОДИН РАЗ с контекстом
+        saveKnowledgeBase(knowledgeBase, {
+            type: "unapply",
+            section: sectionTitleForContext,
+        })
+    }
+}
+// Вспомогательные функции:
+
+// Получить все применения из базы знаний
+function getAllApplications(knowledgeBase) {
+    const applications = []
+
+    Object.values(knowledgeBase).forEach((category) => {
+        if (category.articles) {
+            category.articles.forEach((article) => {
+                if (article.sections) {
+                    article.sections.forEach((section) => {
+                        if (section.applications) {
+                            section.applications.forEach((app) => {
+                                applications.push({
+                                    articleId: article.id,
+                                    articleTitle: article.title,
+                                    sectionId: section.id,
+                                    sectionTitle: section.title,
+                                    sectionUrl: section.url,
+                                    commit: app.commit,
+                                    project: app.project,
+                                    date: app.date,
+                                })
+                            })
+                        }
+                    })
+                }
+            })
+        }
+    })
+
+    // Сортируем по дате (новые сначала)
+    return applications.sort((a, b) => new Date(b.date) - new Date(a.date))
+}
+
+// Найти применения по критериям
+function findApplications(knowledgeBase, criteria) {
+    const applications = []
+
+    Object.values(knowledgeBase).forEach((category) => {
+        if (category.articles) {
+            category.articles.forEach((article) => {
+                // Проверка по статье
+                if (criteria.article && article.id !== criteria.article) {
+                    return
+                }
+
+                if (article.sections) {
+                    article.sections.forEach((section) => {
+                        // Проверка по подтеме
+                        if (criteria.section && section.id !== criteria.section) {
+                            return
+                        }
+
+                        if (section.applications) {
+                            section.applications.forEach((app) => {
+                                // Проверка по коммиту
+                                if (app.commit === criteria.commit) {
+                                    applications.push({
+                                        articleId: article.id,
+                                        articleTitle: article.title,
+                                        sectionId: section.id,
+                                        sectionTitle: section.title,
+                                        sectionUrl: section.url,
+                                        commit: app.commit,
+                                        project: app.project,
+                                        date: app.date,
+                                    })
+                                }
+                            })
+                        }
+                    })
+                }
+            })
+        }
+    })
+
+    return applications
+}
+
+// Удалить применение
+// Удалить применение (только в памяти, без сохранения)
+function removeApplication(knowledgeBase, articleId, sectionId, commit) {
+    const article = findArticleInCategories(knowledgeBase, articleId)?.article
+
+    if (!article || !article.sections) {
+        return false
+    }
+
+    const section = article.sections.find((s) => s.id === sectionId)
+    if (!section || !section.applications) {
+        return false
+    }
+
+    const initialLength = section.applications.length
+    section.applications = section.applications.filter((app) => app.commit !== commit)
+
+    return section.applications.length < initialLength
+}
+
+// Обновить прогресс всех статей
+function updateAllArticlesProgress(knowledgeBase) {
+    Object.values(knowledgeBase).forEach((category) => {
+        if (category.articles) {
+            category.articles.forEach((article) => {
+                updateArticleProgress(article.id)
+            })
+        }
+    })
 }
 
 program.parse()
